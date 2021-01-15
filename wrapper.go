@@ -37,8 +37,12 @@ func RegisterSignalHandlers(handlers SignalHandlers) *w {
 }
 
 // Exec reads signals received from the os and executes the handlers it has registered
-func (ww *w) Exec(fn func()) int {
-	go fn()
+func (ww *w) Exec(fn func() error) int {
+	go func() {
+		if fn() != nil {
+			ww.status <- 1
+		}
+	}()
 	go func(ex *w) {
 		for {
 			select {

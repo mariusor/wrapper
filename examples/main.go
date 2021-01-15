@@ -1,27 +1,47 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"syscall"
 	"time"
-	"wrapper"
+
+	"git.sr.ht/~mariusor/wrapper"
 )
 
-func wait() {
-	const _wait = 400*time.Millisecond
+const (
+	RunTime  = 6 * time.Second
+	WaitTime = 400 * time.Millisecond
+)
+
+func wait() error {
+	ctx, _ := context.WithTimeout(context.Background(), RunTime)
+	var err error
+
+	go func (err error) {
+		select {
+		case <- ctx.Done():
+			err = ctx.Err()
+			fmt.Printf("Stopping\n")
+		}
+	}(err)
+	if err != nil {
+		return err
+	}
 	for {
 		fmt.Printf("waiting")
-		time.Sleep(_wait)
+		time.Sleep(WaitTime)
 		fmt.Printf(".")
-		time.Sleep(_wait)
+		time.Sleep(WaitTime)
 		fmt.Printf(".")
-		time.Sleep(_wait)
+		time.Sleep(WaitTime)
 		fmt.Printf(".")
-		time.Sleep(_wait)
+		time.Sleep(WaitTime)
 		fmt.Printf("\r")
 	}
+	return nil
 }
 
 func main() {
