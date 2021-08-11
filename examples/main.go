@@ -18,18 +18,18 @@ const (
 
 func wait() error {
 	ctx, _ := context.WithTimeout(context.Background(), RunTime)
-	var err error
 
-	go func (err error) {
+	go func () {
 		select {
 		case <- ctx.Done():
-			err = ctx.Err()
+			fmt.Println()
+			if err := ctx.Err(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			}
 			fmt.Printf("Stopping\n")
+			os.Exit(0)
 		}
-	}(err)
-	if err != nil {
-		return err
-	}
+	}()
 	for {
 		fmt.Printf("waiting")
 		time.Sleep(WaitTime)
