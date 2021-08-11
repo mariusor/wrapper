@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func fileExists (dir string) bool {
+func fileExists(dir string) bool {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return false
 	}
@@ -23,22 +23,22 @@ type (
 		key      string
 		addr     string
 	}
-	setterFn func(*c)
+	SetFn func(*c)
 )
 
-func WriteWait(d time.Duration) setterFn {
+func WriteWait(d time.Duration) SetFn {
 	return func(c *c) {
 		c.wTimeOut = d
 	}
 }
 
-func ListenOn(addr string) setterFn {
+func ListenOn(addr string) SetFn {
 	return func(c *c) {
 		c.addr = addr
 	}
 }
 
-func SSL(cert, key string) setterFn {
+func SSL(cert, key string) SetFn {
 	if !fileExists(cert) || !fileExists(key) {
 		return func(*c) {}
 	}
@@ -48,14 +48,14 @@ func SSL(cert, key string) setterFn {
 	}
 }
 
-func Handler(h http.Handler) setterFn {
+func Handler(h http.Handler) SetFn {
 	return func(c *c) {
 		c.h = h
 	}
 }
 
-// HttpServer initializes a http.Server object with values set using setterFn() functions
-func HttpServer(ctx context.Context, setters ...setterFn) (func() error, func() error) {
+// HttpServer initializes a http.Server object with values set using SetFn() functions
+func HttpServer(ctx context.Context, setters ...SetFn) (func() error, func() error) {
 	c := new(c)
 	for _, fn := range setters {
 		fn(c)
