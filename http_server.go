@@ -58,6 +58,8 @@ func HTTPS(addr, cert, key string) SetFn {
 		if addr == "" {
 			addr = ":https"
 		}
+		c.key = key
+		c.cert = cert
 		c.l, err = net.Listen("tcp", addr)
 		return
 	}
