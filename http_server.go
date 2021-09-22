@@ -51,7 +51,7 @@ func HTTPS(addr, cert, key string) SetFn {
 	if !fileExists(cert) {
 		return func(*c) error { return fmt.Errorf("invalid certificate file %q", cert) }
 	}
-	if !fileExists(key){
+	if !fileExists(key) {
 		return func(*c) error { return fmt.Errorf("invalid key file %q", key) }
 	}
 	return func(c *c) (err error) {
@@ -71,7 +71,7 @@ func Handler(h http.Handler) SetFn {
 }
 
 func Socket() SetFn {
-	return func (c *c) (err error) {
+	return func(c *c) (err error) {
 		c.l, err = net.FileListener(os.NewFile(3, "from systemd"))
 		return
 	}
@@ -91,55 +91,56 @@ var (
 			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
 		},
 	}
-	defaultRunFn = func() error {
+	errStartFn = func(err error) func() error {
+		return func() error {
+			return err
+		}
+	}
+	emptyStopFn = func(ctx context.Context) error {
 		return nil
 	}
 )
 
 // HttpServer initializes a http.Server object with values set using SetFn() functions
-func HttpServer(ctx context.Context, setters ...SetFn) (func() error, func() error) {
+func HttpServer(setters ...SetFn) (func() error, func(context.Context) error) {
 	c := new(c)
-	var serveFn, stopFn func() error
+	var startFn func() error
 	for _, fn := range setters {
 		if err := fn(c); err != nil {
-			serveFn = func() error { return err }
+			return errStartFn(err), emptyStopFn
 		}
-		stopFn = defaultRunFn
 	}
 	if c.l == nil {
-		serveFn = func() error { return fmt.Errorf("no listeners have been configured") }
+		return errStartFn(fmt.Errorf("no listeners have been configured")), emptyStopFn
 	}
 
-	srv := &http.Server{
+	srv := http.Server{
 		Handler:      c.h,
 		Addr:         c.addr,
 		WriteTimeout: c.wTimeOut,
 	}
 	switch c.l.(type) {
 	case *net.UnixListener:
-		serveFn = func() error {
+		startFn = func() error {
 			return srv.Serve(c.l)
 		}
 	case *net.TCPListener:
-		if len(c.cert) > 0 && len(c.key) > 0{
-			serveFn = func() error {
+		if len(c.cert) > 0 && len(c.key) > 0 {
+			startFn = func() error {
 				return srv.ServeTLS(c.l, c.cert, c.key)
 			}
 		} else {
-			serveFn = func() error {
+			startFn = func() error {
 				return srv.Serve(c.l)
 			}
 		}
 	}
-	stopFn = func() error {
-		return c.l.Close()
-	}
 
-	stop := func() error {
-		if err := srv.Shutdown(ctx); err != nil {
+	stopFn := func(ctx context.Context) error {
+		if err := c.l.Close(); err != nil {
 			return err
 		}
-		if err := stopFn(); err != nil {
+		if err := srv.Shutdown(ctx); err != nil {
 			return err
 		}
 		select {
@@ -147,6 +148,5 @@ func HttpServer(ctx context.Context, setters ...SetFn) (func() error, func() err
 			return ctx.Err()
 		}
 	}
-	// Run our server in a goroutine so that it doesn't block.
-	return serveFn, stop
+	return startFn, stopFn
 }
