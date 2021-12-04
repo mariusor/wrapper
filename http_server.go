@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -72,9 +73,20 @@ func Handler(h http.Handler) SetFn {
 	}
 }
 
-func Socket() SetFn {
+func Socket(s string) SetFn {
 	return func(c *c) (err error) {
-		c.l, err = net.FileListener(os.NewFile(3, "from systemd"))
+		c.l, err = net.Listen("unix", s)
+		return
+	}
+}
+
+func Systemd() SetFn {
+	return func(c *c) (err error) {
+		nfds, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+		if err != nil || nfds == 0 {
+			return fmt.Errorf("it appears that we're not expected to wait for a systemd socket connection")
+		}
+		c.l, err = net.FileListener(os.NewFile(3, "Systemd listen fd"))
 		return
 	}
 }
@@ -121,6 +133,18 @@ func HttpServer(setters ...SetFn) (func() error, func(context.Context) error) {
 		Addr:         c.addr,
 		WriteTimeout: c.wTimeOut,
 	}
+	stopFn := func(ctx context.Context) error {
+		if err := c.l.Close(); err != nil {
+			return err
+		}
+		if err := srv.Shutdown(ctx); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	switch c.l.(type) {
 	case *net.UnixListener:
 		startFn = func() error {
@@ -138,17 +162,5 @@ func HttpServer(setters ...SetFn) (func() error, func(context.Context) error) {
 		}
 	}
 
-	stopFn := func(ctx context.Context) error {
-		if err := c.l.Close(); err != nil {
-			return err
-		}
-		if err := srv.Shutdown(ctx); err != nil {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 	return startFn, stopFn
 }
