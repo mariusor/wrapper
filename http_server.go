@@ -44,6 +44,9 @@ func OnTCP(addr string) SetFn {
 	return func(c *c) error {
 		if addr == "" {
 			addr = ":http"
+			if len(c.key)+len(c.cert) > 0 {
+				addr = ":https"
+			}
 		}
 		l, err := net.Listen("tcp", addr)
 		if err != nil {
@@ -143,21 +146,14 @@ func (c *c) start() error {
 			WriteTimeout: c.wTimeOut,
 		}
 		c.s = append(c.s, srv)
-		switch l.(type) {
-		case *net.UnixListener:
+		if len(c.cert)+len(c.key) > 0 {
+			go func() {
+				errChan <- srv.ServeTLS(l, c.cert, c.key)
+			}()
+		} else {
 			go func() {
 				errChan <- srv.Serve(l)
 			}()
-		case *net.TCPListener:
-			if len(c.cert) > 0 && len(c.key) > 0 {
-				go func() {
-					errChan <- srv.ServeTLS(l, c.cert, c.key)
-				}()
-			} else {
-				go func() {
-					errChan <- srv.Serve(l)
-				}()
-			}
 		}
 	}
 	select {
