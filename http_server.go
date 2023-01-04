@@ -40,7 +40,7 @@ func WriteWait(d time.Duration) SetFn {
 	}
 }
 
-func HTTP(addr string) SetFn {
+func OnTCP(addr string) SetFn {
 	return func(c *c) error {
 		if addr == "" {
 			addr = ":http"
@@ -54,7 +54,7 @@ func HTTP(addr string) SetFn {
 	}
 }
 
-func HTTPS(addr, cert, key string) SetFn {
+func WithTLSCert(cert, key string) SetFn {
 	if !fileExists(cert) {
 		return func(*c) error { return fmt.Errorf("invalid certificate file %q", cert) }
 	}
@@ -62,16 +62,8 @@ func HTTPS(addr, cert, key string) SetFn {
 		return func(*c) error { return fmt.Errorf("invalid key file %q", key) }
 	}
 	return func(c *c) error {
-		if addr == "" {
-			addr = ":https"
-		}
 		c.key = key
 		c.cert = cert
-		l, err := net.Listen("tcp", addr)
-		if err != nil {
-			return err
-		}
-		c.l = append(c.l, l)
 		return nil
 	}
 }
@@ -83,7 +75,7 @@ func Handler(h http.Handler) SetFn {
 	}
 }
 
-func Socket(s string) SetFn {
+func OnSocket(s string) SetFn {
 	return func(c *c) error {
 		l, err := net.Listen("unix", s)
 		if err != nil {
@@ -94,7 +86,7 @@ func Socket(s string) SetFn {
 	}
 }
 
-func Systemd() SetFn {
+func OnSystemd() SetFn {
 	nfds, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
 	if err != nil || nfds == 0 {
 		return func(_ *c) error {
@@ -102,7 +94,7 @@ func Systemd() SetFn {
 		}
 	}
 	return func(c *c) error {
-		l, err := net.FileListener(os.NewFile(3, "Systemd listen fd"))
+		l, err := net.FileListener(os.NewFile(3, "OnSystemd listen fd"))
 		if err != nil {
 			return err
 		}
