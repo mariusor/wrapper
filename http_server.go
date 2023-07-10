@@ -91,17 +91,31 @@ func OnSocket(s string) SetFn {
 
 func OnSystemd() SetFn {
 	nfds, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
-	if err != nil || nfds == 0 {
+	if err != nil || nfds <= 0 {
 		return func(_ *c) error {
 			return fmt.Errorf("it appears that we're not expected to wait for a systemd socket connection")
 		}
 	}
+	start := uintptr(3) // man 3 sd_listen_fds
+	if fdStart, err := strconv.ParseInt(os.Getenv("SD_LISTEN_FDS_START"), 10, 32); err == nil {
+		start = uintptr(fdStart)
+	}
 	return func(c *c) error {
-		l, err := net.FileListener(os.NewFile(3, "OnSystemd listen fd"))
-		if err != nil {
-			return err
+		for i := start; i < uintptr(nfds); i++ {
+			ff := os.NewFile(i, "Systemd listen fd")
+			fi, err := ff.Stat()
+			if err != nil {
+				return err
+			}
+			if fi.Mode()&os.ModeSocket != os.ModeSocket {
+				return fmt.Errorf("it appears that we're not expected to wait for a systemd socket connection")
+			}
+			l, err := net.FileListener(ff)
+			if err != nil {
+				return err
+			}
+			c.l = append(c.l, l)
 		}
-		c.l = append(c.l, l)
 		return nil
 	}
 }
