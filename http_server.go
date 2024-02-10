@@ -3,6 +3,7 @@ package wrapper
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,7 +27,6 @@ type (
 		wTimeOut time.Duration
 		cert     string
 		key      string
-		errFn    func(s string, p ...interface{})
 	}
 	SetFn func(*c) error
 )
@@ -120,13 +120,6 @@ func OnSystemd() SetFn {
 	}
 }
 
-func Err(errFn func(s string, p ...interface{})) SetFn {
-	return func(c *c) error {
-		c.errFn = errFn
-		return nil
-	}
-}
-
 var (
 	defaultTLSConfig = tls.Config{
 		MinVersion:       tls.VersionTLS12,
@@ -160,44 +153,56 @@ func (c *c) start() error {
 			WriteTimeout: c.wTimeOut,
 		}
 		c.s = append(c.s, srv)
-		if len(c.cert)+len(c.key) > 0 {
-			go func() {
+		go func(srv *http.Server, l net.Listener) {
+			if len(c.cert)+len(c.key) > 0 {
 				errChan <- srv.ServeTLS(l, c.cert, c.key)
-			}()
-		} else {
-			go func() {
+			} else {
 				errChan <- srv.Serve(l)
-			}()
+			}
+		}(&srv, l)
+	}
+	errs := make([]error, 0)
+	for range c.l {
+		select {
+		case err := <-errChan:
+			errs = append(errs, err)
+		default:
 		}
 	}
-	select {
-	case err := <-errChan:
-		return err
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
 
 func (c *c) stop(ctx context.Context) error {
-	var err error
+	errs := make([]error, 0)
 	for i, l := range c.l {
-		l.Close()
+		if err := l.Close(); err != nil {
+			errs = append(errs, err)
+		}
 		srv := c.s[i]
 		if err := srv.Shutdown(ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	for range c.l {
+		select {
+		case <-ctx.Done():
+			errs = append(errs, ctx.Err())
+		default:
+		}
 	}
-	return err
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // HttpServer initializes a http.Server object with values set using SetFn() functions
 func HttpServer(setters ...SetFn) (func() error, func(context.Context) error) {
 	c := c{
-		l:     make([]net.Listener, 0),
-		errFn: nilErrFn,
+		l: make([]net.Listener, 0),
 	}
 	for _, fn := range setters {
 		if err := fn(&c); err != nil {
