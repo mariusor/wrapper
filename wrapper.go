@@ -1,6 +1,7 @@
 package wrapper
 
 import (
+	"context"
 	"os"
 	"os/signal"
 )
@@ -15,7 +16,7 @@ type (
 		h SignalHandlers
 	}
 
-	handlerFn func(chan int)
+	handlerFn func(chan<- int)
 
 	// SignalHandlers is a map that stores the association between signals and functions to be executed
 	SignalHandlers map[os.Signal]handlerFn
@@ -37,12 +38,14 @@ func RegisterSignalHandlers(handlers SignalHandlers) *w {
 }
 
 // Exec reads signals received from the os and executes the handlers it has registered
-func (ww *w) Exec(fn func() error) int {
+func (ww *w) Exec(ctx context.Context, fn func(context.Context) error) int {
 	go func() {
-		if fn() != nil {
+		if fn(ctx) != nil {
 			ww.status <- 1
 		}
+		ww.status <- 0
 	}()
+
 	go func(ex *w) {
 		for {
 			select {
@@ -51,5 +54,5 @@ func (ww *w) Exec(fn func() error) int {
 			}
 		}
 	}(ww)
-	return <- ww.status
+	return <-ww.status
 }
