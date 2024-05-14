@@ -133,8 +133,8 @@ var (
 			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
 		},
 	}
-	errStartFn = func(err error) func() error {
-		return func() error {
+	errStartFn = func(err error) func(context.Context) error {
+		return func(context.Context) error {
 			return err
 		}
 	}
@@ -143,7 +143,7 @@ var (
 	}
 )
 
-func (c *c) start() error {
+func (c *c) start(_ context.Context) error {
 	c.s = make([]http.Server, 0, len(c.l))
 	errChan := make(chan error, len(c.l))
 	for _, l := range c.l {
@@ -162,12 +162,13 @@ func (c *c) start() error {
 		}(&srv, l)
 	}
 	errs := make([]error, 0)
-	for range c.l {
+	for {
 		select {
+		// block until all servers return
 		case err := <-errChan:
 			errs = append(errs, err)
-		default:
 		}
+		break
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -200,7 +201,7 @@ func (c *c) stop(ctx context.Context) error {
 }
 
 // HttpServer initializes a http.Server object with values set using SetFn() functions
-func HttpServer(setters ...SetFn) (func() error, func(context.Context) error) {
+func HttpServer(setters ...SetFn) (func(context.Context) error, func(context.Context) error) {
 	c := c{
 		l: make([]net.Listener, 0),
 	}
