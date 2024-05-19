@@ -10,13 +10,13 @@ type (
 	w struct {
 		// signal is a channel which is waiting on user/os signals
 		signal chan os.Signal
-		// status is a channel on which we return the exit codes for application
-		status chan int
+		// err is a channel on which we return the error for application
+		err chan error
 		// handlers is the mapping of signals to functions to execute
 		h SignalHandlers
 	}
 
-	handlerFn func(chan<- int)
+	handlerFn func(chan<- error)
 
 	// SignalHandlers is a map that stores the association between signals and functions to be executed
 	SignalHandlers map[os.Signal]handlerFn
@@ -26,7 +26,7 @@ type (
 func RegisterSignalHandlers(handlers SignalHandlers) *w {
 	x := &w{
 		signal: make(chan os.Signal, 1),
-		status: make(chan int, 1),
+		err:    make(chan error, 1),
 		h:      handlers,
 	}
 	signals := make([]os.Signal, 0)
@@ -38,21 +38,19 @@ func RegisterSignalHandlers(handlers SignalHandlers) *w {
 }
 
 // Exec reads signals received from the os and executes the handlers it has registered
-func (ww *w) Exec(ctx context.Context, fn func(context.Context) error) int {
+func (ww *w) Exec(ctx context.Context, fn func(context.Context) error) error {
 	go func() {
-		if fn(ctx) != nil {
-			ww.status <- 1
+		if err := fn(ctx); err != nil {
+			ww.err <- err
 		}
-		ww.status <- 0
 	}()
-
 	go func(ex *w) {
 		for {
 			select {
 			case s := <-ex.signal:
-				ex.h[s](ex.status)
+				ex.h[s](ex.err)
 			}
 		}
 	}(ww)
-	return <-ww.status
+	return <-ww.err
 }
