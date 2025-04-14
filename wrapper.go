@@ -39,11 +39,11 @@ func RegisterSignalHandlers(handlers SignalHandlers) *w {
 
 // Exec reads signals received from the os and executes the handlers it has registered
 func (ww *w) Exec(ctx context.Context, fn func(context.Context) error) error {
-	go func() {
+	go func(ctx context.Context) {
 		if err := fn(ctx); err != nil {
 			ww.err <- err
 		}
-	}()
+	}(ctx)
 	go func(ex *w) {
 		for {
 			select {

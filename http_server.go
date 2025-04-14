@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -23,10 +24,11 @@ type (
 	c struct {
 		h        http.Handler
 		l        []net.Listener
-		s        []http.Server
+		s        []*http.Server
 		wTimeOut time.Duration
 		cert     string
 		key      string
+		m        sync.RWMutex
 	}
 	SetFn func(*c) error
 )
@@ -143,16 +145,18 @@ var (
 	}
 )
 
-func (c *c) start(_ context.Context) error {
-	c.s = make([]http.Server, 0, len(c.l))
-	errChan := make(chan error, len(c.l))
-	for _, l := range c.l {
+func (c *c) initServers(errChan chan error) {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	c.s = make([]*http.Server, len(c.l))
+	for i, l := range c.l {
 		srv := http.Server{
 			Handler:      c.h,
 			Addr:         l.Addr().String(),
 			WriteTimeout: c.wTimeOut,
 		}
-		c.s = append(c.s, srv)
+		c.s[i] = &srv
 		go func(srv *http.Server, l net.Listener) {
 			if len(c.cert)+len(c.key) > 0 {
 				errChan <- srv.ServeTLS(l, c.cert, c.key)
@@ -161,6 +165,11 @@ func (c *c) start(_ context.Context) error {
 			}
 		}(&srv, l)
 	}
+}
+func (c *c) start(_ context.Context) error {
+	errChan := make(chan error, len(c.l))
+	c.initServers(errChan)
+
 	errs := make([]error, 0)
 	for {
 		select {
@@ -170,14 +179,14 @@ func (c *c) start(_ context.Context) error {
 		}
 		break
 	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c *c) stop(ctx context.Context) error {
 	errs := make([]error, 0)
+	c.m.RLock()
+	defer c.m.RUnlock()
+
 	for i, l := range c.l {
 		if err := l.Close(); err != nil {
 			errs = append(errs, err)
