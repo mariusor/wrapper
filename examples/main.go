@@ -16,12 +16,14 @@ const (
 	WaitTime = 400 * time.Millisecond
 )
 
-func wait() error {
-	ctx, _ := context.WithTimeout(context.Background(), RunTime)
+func wait(ctx context.Context) error {
+	var stopFn func()
+	ctx, stopFn = context.WithTimeout(context.Background(), RunTime)
+	defer stopFn()
 
-	go func () {
+	go func() {
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
 			fmt.Println()
 			if err := ctx.Err(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -46,47 +48,53 @@ func wait() error {
 
 func main() {
 	l := log.New(os.Stdout, "", 0)
-	os.Exit(wrapper.RegisterSignalHandlers(
+
+	err := wrapper.RegisterSignalHandlers(
 		wrapper.SignalHandlers{
-			syscall.SIGHUP: func(_ chan int) {
+			syscall.SIGHUP: func(_ chan<- error) {
 				fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGHUP ")
 				l.Printf("reloading config")
 			},
-			syscall.SIGUSR1: func(_ chan int) {
+			syscall.SIGUSR1: func(_ chan<- error) {
 				fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGUSR1 ")
 				l.Printf("performing maintenance task #1")
 			},
-			syscall.SIGUSR2: func(_ chan int) {
+			syscall.SIGUSR2: func(_ chan<- error) {
 				fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGUSR2 ")
 				l.Printf("performing maintenance task #2")
 			},
-			syscall.SIGTERM: func(exit chan int) {
+			syscall.SIGTERM: func(exit chan<- error) {
 				// kill -SIGTERM XXXX
 				fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGTERM ")
 				l.Printf("stopping")
-				exit <- 0
+				exit <- fmt.Errorf("stopping")
 			},
-			syscall.SIGINT: func(exit chan int) {
+			syscall.SIGINT: func(exit chan<- error) {
 				// kill -SIGINT XXXX or Ctrl+c
 				l.SetPrefix("SIGINT ")
 				fmt.Fprintln(l.Writer())
 				l.Printf("stopping gracefully")
 				fmt.Fprintf(l.Writer(), "\nHere we can gracefully close things (waiting 3s)\n")
-				time.Sleep(3*time.Second)
-				exit <- 0
+				time.Sleep(3 * time.Second)
+				exit <- fmt.Errorf("stopping")
 				fmt.Fprintln(l.Writer())
 			},
-			syscall.SIGQUIT: func(exit chan int) {
+			syscall.SIGQUIT: func(exit chan<- error) {
 				l.SetPrefix("SIGQUIT ")
 				l.SetOutput(os.Stderr)
 				fmt.Fprintln(l.Writer())
 				l.Printf("force stopping")
-				exit <- -1
+				exit <- fmt.Errorf("force stopping")
 			},
 		},
-	).Exec(wait))
+	).Exec(context.Background(), wait)
+
+	if err != nil {
+		os.Exit(-1)
+		l.Printf("err: %s", err)
+	}
 }
