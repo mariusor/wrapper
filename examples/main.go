@@ -11,37 +11,31 @@ import (
 	"git.sr.ht/~mariusor/wrapper"
 )
 
-const (
-	RunTime  = 6 * time.Second
-	WaitTime = 400 * time.Millisecond
-)
+const WaitTime = 200 * time.Millisecond
+
+func printSpinner() {
+	fmt.Printf("waiting")
+	time.Sleep(WaitTime)
+	fmt.Printf(".")
+	time.Sleep(WaitTime)
+	fmt.Printf(".")
+	time.Sleep(WaitTime)
+	fmt.Printf(".")
+	time.Sleep(WaitTime)
+	fmt.Printf("\r")
+}
 
 func wait(ctx context.Context) error {
-	var stopFn func()
-	ctx, stopFn = context.WithTimeout(context.Background(), RunTime)
-	defer stopFn()
-
-	go func() {
+	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println()
-			if err := ctx.Err(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-			}
 			fmt.Printf("Stopping\n")
-			os.Exit(0)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		default:
+			printSpinner()
 		}
-	}()
-	for {
-		fmt.Printf("waiting")
-		time.Sleep(WaitTime)
-		fmt.Printf(".")
-		time.Sleep(WaitTime)
-		fmt.Printf(".")
-		time.Sleep(WaitTime)
-		fmt.Printf(".")
-		time.Sleep(WaitTime)
-		fmt.Printf("\r")
 	}
 	return nil
 }
@@ -49,52 +43,54 @@ func wait(ctx context.Context) error {
 func main() {
 	l := log.New(os.Stdout, "", 0)
 
+	stopGracefully := func(err error) error {
+		_, _ = fmt.Fprintln(l.Writer())
+		l.Printf("stopping gracefully")
+		_, _ = fmt.Fprintf(l.Writer(), "\nHere we can gracefully close things (waiting 3s)\n")
+		time.Sleep(3 * time.Second)
+		return err
+	}
+
 	err := wrapper.RegisterSignalHandlers(
 		wrapper.SignalHandlers{
 			syscall.SIGHUP: func(_ chan<- error) {
-				fmt.Fprintln(l.Writer())
+				_, _ = fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGHUP ")
 				l.Printf("reloading config")
 			},
 			syscall.SIGUSR1: func(_ chan<- error) {
-				fmt.Fprintln(l.Writer())
+				_, _ = fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGUSR1 ")
 				l.Printf("performing maintenance task #1")
 			},
 			syscall.SIGUSR2: func(_ chan<- error) {
-				fmt.Fprintln(l.Writer())
+				_, _ = fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGUSR2 ")
 				l.Printf("performing maintenance task #2")
 			},
 			syscall.SIGTERM: func(exit chan<- error) {
 				// kill -SIGTERM XXXX
-				fmt.Fprintln(l.Writer())
+				_, _ = fmt.Fprintln(l.Writer())
 				l.SetPrefix("SIGTERM ")
-				l.Printf("stopping")
-				exit <- fmt.Errorf("stopping")
+				exit <- stopGracefully(nil)
 			},
 			syscall.SIGINT: func(exit chan<- error) {
 				// kill -SIGINT XXXX or Ctrl+c
 				l.SetPrefix("SIGINT ")
-				fmt.Fprintln(l.Writer())
-				l.Printf("stopping gracefully")
-				fmt.Fprintf(l.Writer(), "\nHere we can gracefully close things (waiting 3s)\n")
-				time.Sleep(3 * time.Second)
-				exit <- fmt.Errorf("stopping")
-				fmt.Fprintln(l.Writer())
+				exit <- stopGracefully(fmt.Errorf("Interrupted"))
 			},
 			syscall.SIGQUIT: func(exit chan<- error) {
 				l.SetPrefix("SIGQUIT ")
 				l.SetOutput(os.Stderr)
-				fmt.Fprintln(l.Writer())
+				_, _ = fmt.Fprintln(l.Writer())
 				l.Printf("force stopping")
-				exit <- fmt.Errorf("force stopping")
+				exit <- fmt.Errorf("forced stop")
 			},
 		},
 	).Exec(context.Background(), wait)
 
 	if err != nil {
+		l.Printf("%+s", err)
 		os.Exit(-1)
-		l.Printf("err: %s", err)
 	}
 }
