@@ -184,7 +184,7 @@ func (c *c) start(ctx context.Context) error {
 }
 
 func (c *c) stop(ctx context.Context) error {
-	if err := c.s.Shutdown(ctx); err != nil {
+	if err := c.s.Shutdown(ctx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 
