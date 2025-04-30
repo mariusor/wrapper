@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -22,13 +21,12 @@ func fileExists(dir string) bool {
 
 type (
 	c struct {
+		s        http.Server
 		h        http.Handler
 		l        []net.Listener
-		s        []*http.Server
 		wTimeOut time.Duration
 		cert     string
 		key      string
-		m        sync.RWMutex
 	}
 	SetFn func(*c) error
 )
@@ -145,67 +143,51 @@ var (
 	}
 )
 
-func (c *c) initServers(errChan chan error) {
-	c.m.Lock()
-	defer c.m.Unlock()
+type listenChan struct {
+	l   net.Listener
+	err error
+}
 
-	c.s = make([]*http.Server, len(c.l))
-	for i, l := range c.l {
-		srv := http.Server{
-			Handler:      c.h,
-			Addr:         l.Addr().String(),
-			WriteTimeout: c.wTimeOut,
-		}
-		c.s[i] = &srv
+func (c *c) initServer(errChan chan listenChan) {
+	c.s = http.Server{
+		Handler:      c.h,
+		TLSConfig:    &defaultTLSConfig,
+		WriteTimeout: c.wTimeOut,
+	}
+
+	for _, l := range c.l {
 		go func(srv *http.Server, l net.Listener) {
 			if len(c.cert)+len(c.key) > 0 {
-				errChan <- srv.ServeTLS(l, c.cert, c.key)
+				errChan <- listenChan{l: l, err: srv.ServeTLS(l, c.cert, c.key)}
 			} else {
-				errChan <- srv.Serve(l)
+				errChan <- listenChan{l: l, err: srv.Serve(l)}
 			}
-		}(&srv, l)
+		}(&c.s, l)
 	}
 }
-func (c *c) start(_ context.Context) error {
-	errChan := make(chan error, len(c.l))
-	c.initServers(errChan)
 
-	errs := make([]error, 0)
-	for {
+func (c *c) start(ctx context.Context) error {
+	errChan := make(chan listenChan, len(c.l))
+	c.initServer(errChan)
+
+	errs := make([]error, 0, len(c.l))
+	for i := 0; i < len(c.l); i++ {
 		select {
-		// block until all servers return
-		case err := <-errChan:
-			errs = append(errs, err)
+		case stoppedCh := <-errChan:
+			if !errors.Is(stoppedCh.err, http.ErrServerClosed) {
+				errs = append(errs, fmt.Errorf("received error from %s: %w", stoppedCh.l.Addr(), stoppedCh.err))
+			}
+			continue
 		}
-		break
 	}
 	return errors.Join(errs...)
 }
 
 func (c *c) stop(ctx context.Context) error {
-	errs := make([]error, 0)
-	c.m.RLock()
-	defer c.m.RUnlock()
+	if err := c.s.Shutdown(ctx); err != nil {
+		return err
+	}
 
-	for i, l := range c.l {
-		if err := l.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		srv := c.s[i]
-		if err := srv.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	for range c.l {
-		select {
-		case <-ctx.Done():
-			errs = append(errs, ctx.Err())
-		default:
-		}
-	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
 	return nil
 }
 
