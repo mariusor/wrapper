@@ -25,6 +25,7 @@ type (
 		h        http.Handler
 		l        []net.Listener
 		wTimeOut time.Duration
+		cancelFn func()
 		cert     string
 		key      string
 	}
@@ -169,9 +170,16 @@ func (c *c) start(ctx context.Context) error {
 	errChan := make(chan listenChan, len(c.l))
 	c.initServer(errChan)
 
+	ongoingCtx, cancelFn := context.WithCancel(ctx)
+	c.s.BaseContext = func(_ net.Listener) context.Context {
+		return ongoingCtx
+	}
+	c.cancelFn = cancelFn
+
 	errs := make([]error, 0, len(c.l))
 	for i := 0; i < len(c.l); i++ {
 		select {
+		case <-ongoingCtx.Done():
 		case stoppedCh := <-errChan:
 			if !errors.Is(stoppedCh.e, http.ErrServerClosed) {
 				errs = append(errs, fmt.Errorf("received error from %s: %w", stoppedCh.l.Addr(), stoppedCh.e))
@@ -183,6 +191,11 @@ func (c *c) start(ctx context.Context) error {
 }
 
 func (c *c) stop(ctx context.Context) error {
+	if c.cancelFn != nil {
+		c.cancelFn()
+	}
+	time.Sleep(10 * time.Second)
+
 	if err := c.s.Shutdown(ctx); err != nil {
 		return err
 	}
@@ -190,7 +203,7 @@ func (c *c) stop(ctx context.Context) error {
 	return nil
 }
 
-// HttpServer initializes a http.Server object with values set using SetFn() functions
+// HttpServer initializes an http.Server object with values set using SetFn() functions
 func HttpServer(setters ...SetFn) (func(context.Context) error, func(context.Context) error) {
 	c := c{
 		l: make([]net.Listener, 0),
