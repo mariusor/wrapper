@@ -19,7 +19,7 @@ func loopPrintSeconds(ctx context.Context) error {
 				return err
 			}
 		default:
-			time.Sleep(900 * time.Millisecond)
+			time.Sleep(time.Second)
 			fmt.Printf("%s", time.Now().Sub(st).Truncate(time.Second))
 		}
 	}
@@ -27,13 +27,13 @@ func loopPrintSeconds(ctx context.Context) error {
 }
 
 func sendSignals(pid int) {
-	time.Sleep(1 * time.Second)
+	time.Sleep(1100 * time.Millisecond)
 	_ = syscall.Kill(pid, syscall.SIGHUP)
 	time.Sleep(1 * time.Second)
 	_ = syscall.Kill(pid, syscall.SIGUSR1)
 	time.Sleep(1 * time.Second)
 	_ = syscall.Kill(pid, syscall.SIGTERM)
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 	_ = syscall.Kill(pid, syscall.SIGINT)
 }
 
@@ -80,13 +80,13 @@ func ExampleRegisterSignalHandlers() {
 	}
 
 	// Output:
-	// 0s
-	// SIGHUP reloading config
 	// 1s
-	// SIGUSR1 performing maintenance task
+	// SIGHUP reloading config
 	// 2s
+	// SIGUSR1 performing maintenance task
+	// 3s
 	// SIGTERM stopping gracefully
 	// Here we can gracefully close things (waiting 3s)
-	// 3s4s5s
+	// 4s5s6s
 	// SIGINT interrupted by user
 }
