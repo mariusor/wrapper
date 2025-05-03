@@ -144,25 +144,24 @@ var (
 )
 
 type listenChan struct {
-	l   net.Listener
-	err error
+	l net.Listener
+	e error
 }
 
 func (c *c) initServer(errChan chan listenChan) {
-	c.s = http.Server{
-		Handler:      c.h,
-		TLSConfig:    &defaultTLSConfig,
-		WriteTimeout: c.wTimeOut,
-	}
-
 	for _, l := range c.l {
-		go func(srv *http.Server, l net.Listener) {
+		if l == nil {
+			continue
+		}
+		go func(ch chan<- listenChan, srv *http.Server, l net.Listener) {
 			if len(c.cert)+len(c.key) > 0 {
-				errChan <- listenChan{l: l, err: srv.ServeTLS(l, c.cert, c.key)}
+				err := srv.ServeTLS(l, c.cert, c.key)
+				ch <- listenChan{l: l, e: err}
 			} else {
-				errChan <- listenChan{l: l, err: srv.Serve(l)}
+				err := srv.Serve(l)
+				ch <- listenChan{l: l, e: err}
 			}
-		}(&c.s, l)
+		}(errChan, &c.s, l)
 	}
 }
 
@@ -174,8 +173,8 @@ func (c *c) start(ctx context.Context) error {
 	for i := 0; i < len(c.l); i++ {
 		select {
 		case stoppedCh := <-errChan:
-			if !errors.Is(stoppedCh.err, http.ErrServerClosed) {
-				errs = append(errs, fmt.Errorf("received error from %s: %w", stoppedCh.l.Addr(), stoppedCh.err))
+			if !errors.Is(stoppedCh.e, http.ErrServerClosed) {
+				errs = append(errs, fmt.Errorf("received error from %s: %w", stoppedCh.l.Addr(), stoppedCh.e))
 			}
 			continue
 		}
@@ -201,8 +200,16 @@ func HttpServer(setters ...SetFn) (func(context.Context) error, func(context.Con
 			return errStartFn(err), emptyStopFn
 		}
 	}
-	if c.l == nil {
+	if len(c.l) == 0 {
 		return errStartFn(fmt.Errorf("no listeners have been configured")), emptyStopFn
+	}
+	if c.h == nil {
+		return errStartFn(fmt.Errorf("no handler has been configured")), emptyStopFn
+	}
+	c.s = http.Server{
+		Handler:      c.h,
+		TLSConfig:    &defaultTLSConfig,
+		WriteTimeout: c.wTimeOut,
 	}
 
 	return c.start, c.stop
