@@ -1,0 +1,22 @@
+image: alpine/edge
+packages:
+  - go
+sources:
+  - https://git.sr.ht/~mariusor/wrapper
+secrets:
+  - 3dcea276-38d6-4a7e-85e5-20cbc903e1ea
+tasks:
+  - tests: |
+      export GOMODCACHE=$(go env GOMODCACHE)
+
+      cd wrapper
+      go mod tidy
+      go test -count=1 -cover -v .
+  - push_to_github: |
+      test ${BUILD_SUBMITTER} != "git.sr.ht" && complete-build
+      set -a +x
+      ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+
+      cd wrapper
+      git remote add hub git@github.com:mariusor/wrapper
+      git push hub --force --all
