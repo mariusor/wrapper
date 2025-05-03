@@ -194,7 +194,6 @@ func (c *c) stop(ctx context.Context) error {
 	if c.cancelFn != nil {
 		c.cancelFn()
 	}
-	time.Sleep(10 * time.Second)
 
 	if err := c.s.Shutdown(ctx); err != nil {
 		return err
