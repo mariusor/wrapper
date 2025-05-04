@@ -1,29 +1,35 @@
 package wrapper
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"syscall"
 	"time"
 )
 
-func loopPrintSeconds(ctx context.Context) error {
-	st := time.Now()
-	for {
-		select {
-		case <-ctx.Done():
-			if err := ctx.Err(); err != nil {
-				fmt.Printf("Stopping\n")
-				return err
+var out = bytes.Buffer{}
+
+func loopPrintSeconds(w io.Writer) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		st := time.Now()
+		for {
+			select {
+			case <-ctx.Done():
+				if err := ctx.Err(); err != nil {
+					_, _ = fmt.Fprintf(w, "Stopping\n")
+					return err
+				}
+			default:
+				time.Sleep(time.Second)
+				_, _ = fmt.Fprintf(w, "%s", time.Now().Sub(st).Truncate(time.Second))
 			}
-		default:
-			time.Sleep(time.Second)
-			fmt.Printf("%s", time.Now().Sub(st).Truncate(time.Second))
 		}
+		return nil
 	}
-	return nil
 }
 
 func sendSignals(pid int) {
@@ -38,7 +44,7 @@ func sendSignals(pid int) {
 }
 
 func ExampleRegisterSignalHandlers() {
-	l := log.New(os.Stdout, "", 0)
+	l := log.New(&out, "", 0)
 
 	ctx, stopFn := context.WithTimeout(context.Background(), 7*time.Second)
 	defer stopFn()
@@ -48,36 +54,32 @@ func ExampleRegisterSignalHandlers() {
 	err := RegisterSignalHandlers(
 		SignalHandlers{
 			syscall.SIGHUP: func(_ chan<- error) {
-				_, _ = fmt.Fprintln(l.Writer())
-				l.SetPrefix("SIGHUP ")
+				l.SetPrefix("\nSIGHUP ")
 				l.Printf("reloading config")
 			},
 			syscall.SIGUSR1: func(_ chan<- error) {
-				_, _ = fmt.Fprintln(l.Writer())
-				l.SetPrefix("SIGUSR1 ")
+				l.SetPrefix("\nSIGUSR1 ")
 				l.Printf("performing maintenance task")
 			},
 			syscall.SIGTERM: func(exit chan<- error) {
-				// kill -SIGTERM XXXX
-				_, _ = fmt.Fprintln(l.Writer())
-				l.SetPrefix("SIGTERM ")
+				l.SetPrefix("\nSIGTERM ")
 				l.Printf("stopping gracefully")
 				_, _ = fmt.Fprintf(l.Writer(), "Here we can gracefully close things (waiting 3s)\n")
 				time.Sleep(3 * time.Second)
 				exit <- nil
 			},
 			syscall.SIGINT: func(exit chan<- error) {
-				_, _ = fmt.Fprintln(l.Writer())
-				l.SetPrefix("SIGINT ")
-				l.Printf("interrupted by user")
-				exit <- fmt.Errorf("stopped with intteruption")
+				l.SetPrefix("\nSIGINT ")
+				l.Printf("interrupted by user\n")
+				exit <- fmt.Errorf("stopped with interruption")
 			},
 		},
-	).Exec(ctx, loopPrintSeconds)
+	).Exec(ctx, loopPrintSeconds(&out))
 
 	if err != nil {
 		l.Printf("%+s", err)
 	}
+	fmt.Printf(out.String())
 
 	// Output:
 	// 1s
