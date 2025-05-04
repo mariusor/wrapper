@@ -25,6 +25,7 @@ type (
 		h        http.Handler
 		l        []net.Listener
 		wTimeOut time.Duration
+		gWait    time.Duration
 		cancelFn func()
 		cert     string
 		key      string
@@ -37,6 +38,13 @@ func nilErrFn(_ string, _ ...interface{}) {}
 func WriteWait(d time.Duration) SetFn {
 	return func(c *c) error {
 		c.wTimeOut = d
+		return nil
+	}
+}
+
+func GracefulWait(g time.Duration) SetFn {
+	return func(c *c) error {
+		c.gWait = g
 		return nil
 	}
 }
@@ -144,45 +152,49 @@ var (
 	}
 )
 
-type listenChan struct {
-	l net.Listener
-	e error
-}
-
-func (c *c) initServer(errChan chan listenChan) {
-	for _, l := range c.l {
+func (cc *c) initServer(errChan chan error) {
+	for _, l := range cc.l {
 		if l == nil {
 			continue
 		}
-		go func(ch chan<- listenChan, srv *http.Server, l net.Listener) {
-			if len(c.cert)+len(c.key) > 0 {
-				err := srv.ServeTLS(l, c.cert, c.key)
-				ch <- listenChan{l: l, e: err}
-			} else {
-				err := srv.Serve(l)
-				ch <- listenChan{l: l, e: err}
+		go func(c *c, l net.Listener) {
+			errFn := func(err error) error {
+				if err == nil {
+					return nil
+				}
+				return fmt.Errorf("error on listener %s: %w", l.Addr(), err)
 			}
-		}(errChan, &c.s, l)
+
+			if len(c.cert)+len(c.key) > 0 {
+				errChan <- errFn(c.s.ServeTLS(l, c.cert, c.key))
+			} else {
+				errChan <- errFn(c.s.Serve(l))
+			}
+		}(cc, l)
 	}
 }
 
-func (c *c) start(ctx context.Context) error {
-	errChan := make(chan listenChan, len(c.l))
-	c.initServer(errChan)
-
+func initBaseContext(cc *c, ctx context.Context) {
 	ongoingCtx, cancelFn := context.WithCancel(ctx)
-	c.s.BaseContext = func(_ net.Listener) context.Context {
+	cc.s.BaseContext = func(_ net.Listener) context.Context {
 		return ongoingCtx
 	}
-	c.cancelFn = cancelFn
+	cc.cancelFn = cancelFn
+}
 
-	errs := make([]error, 0, len(c.l))
-	for i := 0; i < len(c.l); i++ {
+func (cc *c) start(ctx context.Context) error {
+	errChan := make(chan error, len(cc.l))
+	cc.initServer(errChan)
+
+	// FIXME(marius): this triggers race conditions
+	//initBaseContext(cc, ctx)
+
+	errs := make([]error, 0, len(cc.l))
+	for i := 0; i < len(cc.l); i++ {
 		select {
-		case <-ongoingCtx.Done():
-		case stoppedCh := <-errChan:
-			if !errors.Is(stoppedCh.e, http.ErrServerClosed) {
-				errs = append(errs, fmt.Errorf("received error from %s: %w", stoppedCh.l.Addr(), stoppedCh.e))
+		case err := <-errChan:
+			if !errors.Is(err, http.ErrServerClosed) {
+				errs = append(errs, fmt.Errorf("received error from: %w", err))
 			}
 			continue
 		}
@@ -190,12 +202,15 @@ func (c *c) start(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (c *c) stop(ctx context.Context) error {
-	if c.cancelFn != nil {
-		c.cancelFn()
+func (cc *c) stop(ctx context.Context) error {
+	if cc.cancelFn != nil {
+		cc.cancelFn()
+	}
+	if cc.gWait > 0 {
+		time.Sleep(cc.gWait)
 	}
 
-	if err := c.s.Shutdown(ctx); err != nil {
+	if err := cc.s.Shutdown(ctx); err != nil {
 		return err
 	}
 
@@ -219,9 +234,11 @@ func HttpServer(setters ...SetFn) (func(context.Context) error, func(context.Con
 		return errStartFn(fmt.Errorf("no handler has been configured")), emptyStopFn
 	}
 	c.s = http.Server{
-		Handler:      c.h,
-		TLSConfig:    &defaultTLSConfig,
-		WriteTimeout: c.wTimeOut,
+		TLSConfig: &defaultTLSConfig,
+		Handler:   c.h,
+	}
+	if c.wTimeOut > 0 {
+		c.s.WriteTimeout = c.wTimeOut
 	}
 
 	return c.start, c.stop
