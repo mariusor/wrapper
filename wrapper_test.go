@@ -7,8 +7,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync"
 	"syscall"
+	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"go.uber.org/goleak"
 )
 
 type Writer struct {
@@ -38,7 +43,7 @@ func loopPrintSeconds(w io.Writer) func(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				if err := ctx.Err(); err != nil {
-					_, _ = fmt.Fprintf(w, "Stopping\n")
+					_, _ = fmt.Fprintf(w, "done: %s\n", err)
 					return err
 				}
 			case now := <-tick.C:
@@ -86,14 +91,17 @@ func ExampleRegisterSignalHandlers() {
 				exit <- nil
 			},
 			syscall.SIGINT: func(exit chan<- error) {
-				exit <- fmt.Errorf("stopped with interruption")
+				l.SetPrefix("\nSIGINT ")
+				l.Printf("interrupted by user\n")
+				exit <- Interrupt
 			},
 		},
 	).Exec(ctx, loopPrintSeconds(out))
 
 	if err != nil {
-		l.Printf("%+s", err)
+		l.Printf("%s", err)
 	}
+
 	fmt.Printf(out.String())
 
 	// Output:
@@ -104,5 +112,66 @@ func ExampleRegisterSignalHandlers() {
 	// 3s
 	// SIGTERM stopping gracefully
 	// Here we can gracefully close things (waiting 3s)
-	// 4s5s6s
+	// 4s
+	// SIGINT interrupted by user
+	// done: context canceled
+	//
+}
+
+func Test_w_Exec(t *testing.T) {
+	handleErrFn := func(err error) func(errors chan<- error) {
+		return func(errors chan<- error) {
+			errors <- err
+		}
+	}
+
+	nilExecFn := func(ctx context.Context) error { return nil }
+
+	type fields struct {
+		signal chan os.Signal
+		err    chan error
+		h      SignalHandlers
+	}
+	type args struct {
+		ctx context.Context
+		fn  func(context.Context) error
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		wantErr error
+	}{
+		{
+			name:    "empty",
+			fields:  fields{},
+			args:    args{},
+			wantErr: nil,
+		},
+		{
+			name: "no signal",
+			fields: fields{
+				signal: make(chan os.Signal),
+				err:    make(chan error),
+				h: SignalHandlers{
+					syscall.SIGHUP: handleErrFn(nil),
+				},
+			},
+			args:    args{context.TODO(), nilExecFn},
+			wantErr: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer goleak.VerifyNone(t)
+			ww := &w{
+				signal: tt.fields.signal,
+				err:    tt.fields.err,
+				h:      tt.fields.h,
+			}
+			if err := ww.Exec(tt.args.ctx, tt.args.fn); !cmp.Equal(err, tt.wantErr) {
+				t.Errorf("Exec() error = %s", cmp.Diff(err, tt.wantErr))
+			}
+		})
+	}
 }
