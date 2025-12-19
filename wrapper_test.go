@@ -11,11 +11,29 @@ import (
 	"time"
 )
 
-var out = bytes.Buffer{}
+type Writer struct {
+	mu   sync.RWMutex
+	buff bytes.Buffer
+}
+
+func (w *Writer) String() string {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.buff.String()
+}
+
+func (w *Writer) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buff.Write(p)
+}
+
+var out = new(Writer)
 
 func loopPrintSeconds(w io.Writer) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
-		st := time.Now()
+		st := time.Now().Truncate(time.Second)
+		tick := time.NewTicker(time.Second)
 		for {
 			select {
 			case <-ctx.Done():
@@ -23,12 +41,11 @@ func loopPrintSeconds(w io.Writer) func(ctx context.Context) error {
 					_, _ = fmt.Fprintf(w, "Stopping\n")
 					return err
 				}
+			case now := <-tick.C:
+				_, _ = fmt.Fprintf(w, "%s", now.Sub(st).Truncate(time.Second))
 			default:
-				time.Sleep(time.Second)
-				_, _ = fmt.Fprintf(w, "%s", time.Now().Sub(st).Truncate(time.Second))
 			}
 		}
-		return nil
 	}
 }
 
@@ -44,9 +61,9 @@ func sendSignals(pid int) {
 }
 
 func ExampleRegisterSignalHandlers() {
-	l := log.New(&out, "", 0)
+	l := log.New(out, "", 0)
 
-	ctx, stopFn := context.WithTimeout(context.Background(), 7*time.Second)
+	ctx, stopFn := context.WithTimeout(context.Background(), 8*time.Second)
 	defer stopFn()
 
 	go sendSignals(os.Getpid())
@@ -69,12 +86,10 @@ func ExampleRegisterSignalHandlers() {
 				exit <- nil
 			},
 			syscall.SIGINT: func(exit chan<- error) {
-				l.SetPrefix("\nSIGINT ")
-				l.Printf("interrupted by user\n")
 				exit <- fmt.Errorf("stopped with interruption")
 			},
 		},
-	).Exec(ctx, loopPrintSeconds(&out))
+	).Exec(ctx, loopPrintSeconds(out))
 
 	if err != nil {
 		l.Printf("%+s", err)
@@ -90,5 +105,4 @@ func ExampleRegisterSignalHandlers() {
 	// SIGTERM stopping gracefully
 	// Here we can gracefully close things (waiting 3s)
 	// 4s5s6s
-	// SIGINT interrupted by user
 }
