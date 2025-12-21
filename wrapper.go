@@ -26,16 +26,6 @@ type (
 	SignalHandlers map[os.Signal]handlerFn
 )
 
-func signals(handlers SignalHandlers) []os.Signal {
-	handled := make([]os.Signal, 0, len(handlers))
-	for sig := range handlers {
-		handled = append(handled, sig)
-	}
-	return handled
-}
-
-var Interrupt = syscall.EINTR
-
 // RegisterSignalHandlers sets up the signal handlers we want to use
 func RegisterSignalHandlers(handlers SignalHandlers) *w {
 	ww := &w{
@@ -47,15 +37,26 @@ func RegisterSignalHandlers(handlers SignalHandlers) *w {
 	return ww
 }
 
+func signals(handlers SignalHandlers) []os.Signal {
+	handled := make([]os.Signal, 0, len(handlers))
+	for sig := range handlers {
+		handled = append(handled, sig)
+	}
+	return handled
+}
+
+var Interrupt = syscall.EINTR
+
 func (ww *w) wait(ctx context.Context) {
 	errCh := make(chan error, 1)
-	defer close(errCh)
 	for {
 		select {
 		case <-ctx.Done():
 			//ww.err <- ctx.Err()
 			return
 		case err := <-errCh:
+			// NOTE(marius): currently we ignore all nil errors passed from the signal handler functions
+			// unless they're in the form of the [Interrupt] stop value.
 			if err != nil {
 				if errors.Is(err, Interrupt) {
 					err = nil
@@ -65,7 +66,8 @@ func (ww *w) wait(ctx context.Context) {
 			}
 		case sig := <-ww.signal:
 			if handler, ok := ww.h[sig]; ok {
-				// NOTE(marius): run this asynchronously
+				// NOTE(marius): run this asynchronously so we don't block execution after receiving a signal
+				// I'm not sure if that's actually a valid way to do things.
 				go handler(errCh)
 			}
 		}
