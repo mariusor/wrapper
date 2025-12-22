@@ -48,6 +48,9 @@ func main() {
 		l.Printf("stopping gracefully")
 		_, _ = fmt.Fprintf(l.Writer(), "\nHere we can gracefully close things (waiting 3s)\n")
 		time.Sleep(3 * time.Second)
+		if err == nil {
+			err = wrapper.Interrupt
+		}
 		return err
 	}
 
