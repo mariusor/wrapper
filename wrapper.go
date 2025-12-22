@@ -27,6 +27,9 @@ type (
 )
 
 // RegisterSignalHandlers sets up the signal handlers we want to use
+// The SignalHandlers map consists of pairs of [os.Signal] and [handlerFn] functions.
+// If the handler functions require the interruption of execution, they need to pass a non nil error through
+// their exit channel argument or, for exiting without error, the local alias [Interrupt] error can be used.
 func RegisterSignalHandlers(handlers SignalHandlers) *w {
 	ww := &w{
 		signal: make(chan os.Signal),
@@ -45,6 +48,8 @@ func signals(handlers SignalHandlers) []os.Signal {
 	return handled
 }
 
+// Interrupt is an alias for the [syscall.EINTR] error that serves as
+// a gate error for stoping execution in the wrapper execution.
 var Interrupt = syscall.EINTR
 
 func (ww *w) wait(ctx context.Context) {
