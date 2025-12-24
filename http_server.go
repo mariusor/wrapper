@@ -207,10 +207,16 @@ func (cc *c) start(ctx context.Context) error {
 
 func (cc *c) stop(ctx context.Context) error {
 	if cc.cancelFn != nil {
-		cc.cancelFn()
+		defer cc.cancelFn()
 	}
+
 	if cc.gWait > 0 {
-		time.Sleep(cc.gWait)
+		// NOTE(marius): wait on wait timer to tick, or context to be canceled
+		wait := time.NewTimer(cc.gWait)
+		select {
+		case <-ctx.Done():
+		case <-wait.C:
+		}
 	}
 
 	if err := cc.s.Shutdown(ctx); err != nil {

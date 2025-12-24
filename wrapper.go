@@ -53,7 +53,7 @@ func signals(handlers SignalHandlers) []os.Signal {
 var Interrupt = syscall.EINTR
 
 func (ww *w) wait(ctx context.Context) {
-	errCh := make(chan error, 1)
+	errCh := make(chan error)
 	for {
 		select {
 		case <-ctx.Done():
